@@ -1,5 +1,6 @@
 package com.trading.service;
 
+import com.trading.model.ActivityBlock;
 import com.trading.model.Order;
 import com.trading.model.OrderStatus;
 import com.trading.model.StatusTransition;
@@ -38,7 +39,16 @@ public class TatCalculator {
         if (config == null) {
             throw new IllegalArgumentException("Unknown team: " + teamName);
         }
-        return calculateTotalDurationInStatuses(order, config);
+
+        if (config.activityBlocks() == null || config.activityBlocks().isEmpty()) {
+            return Duration.ZERO;
+        }
+
+        Duration totalDuration = Duration.ZERO;
+        for (ActivityBlock block : config.activityBlocks()) {
+            totalDuration = totalDuration.plus(calculateBlockDuration(order, block, config));
+        }
+        return totalDuration;
     }
 
     public Duration calculateAuditReviewTeamTat(Order order) {
@@ -75,7 +85,7 @@ public class TatCalculator {
         return Duration.ZERO;
     }
 
-    private Duration calculateTotalDurationInStatuses(Order order, TeamConfig config) {
+    private Duration calculateBlockDuration(Order order, ActivityBlock block, TeamConfig config) {
         List<StatusTransition> transitions = order.statusTransitions();
         if (transitions == null || transitions.isEmpty()) {
             return Duration.ZERO;
@@ -83,29 +93,29 @@ public class TatCalculator {
 
         transitions.sort(Comparator.comparing(StatusTransition::getChangeTime));
 
-        // 1. Identify Team's Transitions
+        // 1. Identify Block's Transitions
         StatusTransition startTransition = null;
         StatusTransition inProgressTransition = null;
         LocalDateTime endTime = null;
 
         for (int i = 0; i < transitions.size(); i++) {
             StatusTransition t = transitions.get(i);
-            if (config.statuses().contains(t.getStatus())) {
-                if (t.getStatus() == config.entryStatus() && startTransition == null) {
+            if (block.statuses().contains(t.getStatus())) {
+                if (t.getStatus() == block.entryStatus() && startTransition == null) {
                     startTransition = t;
                 }
 
                 // Check for IN_PROGRESS
-                if (t.getStatus() == config.firstInProgressStatus() && inProgressTransition == null) {
+                if (t.getStatus() == block.firstInProgressStatus() && inProgressTransition == null) {
                     inProgressTransition = t;
                 }
 
-                // Look ahead for end of team block
+                // Look ahead for end of block
                 if (i + 1 < transitions.size()) {
                     StatusTransition next = transitions.get(i + 1);
-                    if (!config.statuses().contains(next.getStatus())) {
+                    if (!block.statuses().contains(next.getStatus())) {
                         endTime = next.getChangeTime();
-                        break; // Exited team block
+                        break; // Exited block
                     }
                 }
             }

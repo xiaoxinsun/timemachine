@@ -1,5 +1,6 @@
 package com.trading.service;
 
+import com.trading.model.ActivityBlock;
 import com.trading.model.Order;
 import com.trading.model.OrderStatus;
 import com.trading.model.StatusTransition;
@@ -29,28 +30,48 @@ class TatCalculatorTest {
                 BusinessDurationCalculator durationCalculator = new BusinessDurationCalculator();
 
                 Set<OrderStatus> auditStatuses = Arrays.stream(OrderStatus.values())
-                                .filter(s -> s.name().startsWith("AUDIT_REVIEW") && !s.name().endsWith("_APPROVED"))
+                                .filter(s -> s.name().startsWith("AUDIT_REVIEW")
+                                                && !s.name().contains("CREDIT_APPROVAL")
+                                                && !s.name().endsWith("_APPROVED"))
+                                .collect(Collectors.toSet());
+
+                Set<OrderStatus> creditApprovalStatuses = Arrays.stream(OrderStatus.values())
+                                .filter(s -> s.name().contains("CREDIT_APPROVAL") && !s.name().endsWith("_APPROVED"))
                                 .collect(Collectors.toSet());
 
                 Set<OrderStatus> tradingStatuses = Arrays.stream(OrderStatus.values())
                                 .filter(s -> s.name().startsWith("TRADING"))
                                 .collect(Collectors.toSet());
 
-                TeamConfig auditConfig = TeamConfig.builder()
-                                .teamName("AUDIT_REVIEW")
+                ActivityBlock auditBlock1 = ActivityBlock.builder()
                                 .statuses(auditStatuses)
                                 .entryStatus(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN)
                                 .firstInProgressStatus(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS)
+                                .build();
+
+                ActivityBlock auditBlock2 = ActivityBlock.builder()
+                                .statuses(creditApprovalStatuses)
+                                .entryStatus(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL1_OPEN)
+                                .firstInProgressStatus(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL1_IN_PROGRESS)
+                                .build();
+
+                TeamConfig auditConfig = TeamConfig.builder()
+                                .teamName("AUDIT_REVIEW")
+                                .activityBlocks(List.of(auditBlock1, auditBlock2))
                                 .startTime(LocalTime.of(9, 0))
                                 .cutoffTime(LocalTime.of(17, 0))
                                 .zoneId(ZoneId.systemDefault())
                                 .build();
 
-                TeamConfig tradingConfig = TeamConfig.builder()
-                                .teamName("TRADING")
+                ActivityBlock tradingBlock = ActivityBlock.builder()
                                 .statuses(tradingStatuses)
                                 .entryStatus(OrderStatus.TRADING_OPEN)
                                 .firstInProgressStatus(OrderStatus.TRADING_IN_PROGRESS)
+                                .build();
+
+                TeamConfig tradingConfig = TeamConfig.builder()
+                                .teamName("TRADING")
+                                .activityBlocks(List.of(tradingBlock))
                                 .startTime(LocalTime.of(9, 0))
                                 .cutoffTime(LocalTime.of(17, 0))
                                 .zoneId(ZoneId.systemDefault())
@@ -232,6 +253,50 @@ class TatCalculatorTest {
                 // T8->T9 (OPEN): 10m
                 // T9->T10 (IN_PROGRESS): 10m
                 // Total: 60m.
+
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofMinutes(60), result);
+        }
+
+        @Test
+        void testAuditReviewTeamTat_MultiBlock() {
+                LocalDateTime t0 = LocalDateTime.of(2023, 1, 2, 9, 0); // DRAFT
+
+                List<StatusTransition> transitions = new ArrayList<>();
+                transitions.add(new StatusTransition(OrderStatus.DRAFT, t0));
+
+                // Block 1: Audit Review Level 1/2
+                // Start: 09:10
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, t0.plusMinutes(10)));
+                // End: 09:40
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL2_APPROVED, t0.plusMinutes(40)));
+                // Block 1 Duration: 30m
+
+                // Intermediary Trading Block (Not counted for Audit)
+                transitions.add(new StatusTransition(OrderStatus.TRADING_OPEN, t0.plusMinutes(40)));
+                transitions.add(new StatusTransition(OrderStatus.TRADING_IN_PROGRESS, t0.plusMinutes(50)));
+
+                // Block 2: Credit Approval
+                // Start: 10:00
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL1_OPEN,
+                                t0.plusMinutes(60)));
+                // Parked: 10:10
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL1_PARKED,
+                                t0.plusMinutes(70)));
+                // Resume: 10:40 (Parked 30m)
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL1_IN_PROGRESS,
+                                t0.plusMinutes(100)));
+                // End: 11:00
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_CREDIT_APPROVAL_LEVEL2_APPROVED,
+                                t0.plusMinutes(120)));
+
+                // Block 2 Gross: 10:00 -> 11:00 = 60m
+                // Block 2 Parked: 30m
+                // Block 2 Net: 30m
+
+                // Total TAT = 30m (Block 1) + 30m (Block 2) = 60m
+
+                Order order = Order.builder().statusTransitions(transitions).build();
 
                 Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
                 assertEquals(Duration.ofMinutes(60), result);

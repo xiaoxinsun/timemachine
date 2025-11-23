@@ -2,16 +2,14 @@ package com.trading.model;
 
 import lombok.Builder;
 
+import java.util.List;
 import java.time.LocalTime;
 import java.time.ZoneId;
-import java.util.Set;
 
 @Builder
 public record TeamConfig(
         String teamName,
-        Set<OrderStatus> statuses,
-        OrderStatus entryStatus,
-        OrderStatus firstInProgressStatus,
+        List<ActivityBlock> activityBlocks,
         LocalTime startTime,
         LocalTime cutoffTime,
         ZoneId zoneId) {
