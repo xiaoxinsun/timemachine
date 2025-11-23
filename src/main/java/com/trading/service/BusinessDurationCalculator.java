@@ -6,7 +6,6 @@ import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.temporal.ChronoUnit;
 
 public class BusinessDurationCalculator {
 
@@ -20,7 +19,7 @@ public class BusinessDurationCalculator {
 
         // 1. Adjust Start Time based on Cutoff and Business Hours
         LocalDateTime effectiveStart = adjustStartTime(start, config);
-        
+
         // If adjustment pushed start past end, duration is 0
         if (effectiveStart.isAfter(end)) {
             return Duration.ZERO;
@@ -37,14 +36,14 @@ public class BusinessDurationCalculator {
         // If after cutoff, move to next business day start
         if (time.isAfter(config.cutoffTime())) {
             adjusted = getNextBusinessDayStart(start.toLocalDate().plusDays(1), config);
-        } 
+        }
         // If before start time, move to start time of same day (if business day)
         else if (time.isBefore(config.startTime())) {
-             if (isWeekend(start)) {
-                 adjusted = getNextBusinessDayStart(start.toLocalDate(), config);
-             } else {
-                 adjusted = LocalDateTime.of(start.toLocalDate(), config.startTime());
-             }
+            if (isWeekend(start)) {
+                adjusted = getNextBusinessDayStart(start.toLocalDate(), config);
+            } else {
+                adjusted = LocalDateTime.of(start.toLocalDate(), config.startTime());
+            }
         }
         // If on weekend, move to next business day start
         else if (isWeekend(start)) {
@@ -54,7 +53,7 @@ public class BusinessDurationCalculator {
         return adjusted;
     }
 
-    private LocalDateTime getNextBusinessDayStart(java.time.LocalDate date, TeamConfig config) {
+    public LocalDateTime getNextBusinessDayStart(java.time.LocalDate date, TeamConfig config) {
         java.time.LocalDate nextDate = date;
         while (isWeekend(nextDate)) {
             nextDate = nextDate.plusDays(1);
@@ -82,23 +81,27 @@ public class BusinessDurationCalculator {
                 continue;
             }
 
-            LocalDateTime dayEnd = LocalDateTime.of(current.toLocalDate(), config.cutoffTime()); // Using cutoff as end of business day? 
-            // Requirement says "cutoff time which marked their end of day". 
+            LocalDateTime dayEnd = LocalDateTime.of(current.toLocalDate(), config.cutoffTime()); // Using cutoff as end
+                                                                                                 // of business day?
+            // Requirement says "cutoff time which marked their end of day".
             // So we count time until cutoff.
-            
-            // If current time is already past cutoff (shouldn't happen with adjusted start, but for safety), skip to next day
+
+            // If current time is already past cutoff (shouldn't happen with adjusted start,
+            // but for safety), skip to next day
             if (current.toLocalTime().isAfter(config.cutoffTime())) {
-                 current = LocalDateTime.of(current.toLocalDate().plusDays(1), config.startTime());
-                 continue;
+                current = LocalDateTime.of(current.toLocalDate().plusDays(1), config.startTime());
+                continue;
             }
-            
-            // If current time is before start (shouldn't happen with adjusted start), move to start
+
+            // If current time is before start (shouldn't happen with adjusted start), move
+            // to start
             if (current.toLocalTime().isBefore(config.startTime())) {
                 current = LocalDateTime.of(current.toLocalDate(), config.startTime());
             }
 
             // Determine the end of the counting interval for this day
-            // It's either the actual end time (if on same day) or the business day end (cutoff)
+            // It's either the actual end time (if on same day) or the business day end
+            // (cutoff)
             LocalDateTime intervalEnd;
             if (end.toLocalDate().equals(current.toLocalDate())) {
                 if (end.toLocalTime().isBefore(config.cutoffTime())) {
@@ -109,7 +112,7 @@ public class BusinessDurationCalculator {
             } else {
                 intervalEnd = dayEnd;
             }
-            
+
             if (current.isBefore(intervalEnd)) {
                 totalDuration = totalDuration.plus(Duration.between(current, intervalEnd));
             }

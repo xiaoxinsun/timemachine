@@ -37,4 +37,8 @@ public enum OrderStatus {
     public boolean isTradingStatus() {
         return TRADING_STATUSES.contains(this);
     }
+
+    public boolean isParked() {
+        return name().endsWith("_PARKED");
+    }
 }

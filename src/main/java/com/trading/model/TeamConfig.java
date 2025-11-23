@@ -8,9 +8,11 @@ import java.util.Set;
 
 @Builder
 public record TeamConfig(
-    String teamName,
-    Set<OrderStatus> statuses,
-    LocalTime startTime,
-    LocalTime cutoffTime,
-    ZoneId zoneId
-) {}
+        String teamName,
+        Set<OrderStatus> statuses,
+        OrderStatus entryStatus,
+        OrderStatus firstInProgressStatus,
+        LocalTime startTime,
+        LocalTime cutoffTime,
+        ZoneId zoneId) {
+}

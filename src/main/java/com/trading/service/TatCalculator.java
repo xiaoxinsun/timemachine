@@ -21,10 +21,6 @@ public class TatCalculator {
         this.teamConfigs = teamConfigs;
     }
 
-    // Default constructor for backward compatibility or simple tests if needed, 
-    // but ideally we should use the one with dependencies.
-    // For now, I'll remove the default constructor to force configuration.
-
     public Duration calculateOverallTat(Order order) {
         return calculateDurationBetween(order, OrderStatus.DRAFT, OrderStatus.COMPLETED);
     }
@@ -44,12 +40,6 @@ public class TatCalculator {
         }
         return calculateTotalDurationInStatuses(order, config);
     }
-
-    // Deprecated methods kept for now or removed? 
-    // The user asked to "introduce additional order status which corresponding to additional teams".
-    // So I should probably replace the hardcoded methods with the generic one,
-    // or delegate them to the generic one if we want to keep the API.
-    // I'll keep them for now but delegate.
 
     public Duration calculateAuditReviewTeamTat(Order order) {
         return calculateTeamTat(order, "AUDIT_REVIEW");
@@ -93,25 +83,93 @@ public class TatCalculator {
 
         transitions.sort(Comparator.comparing(StatusTransition::getChangeTime));
 
-        Duration totalDuration = Duration.ZERO;
+        // 1. Identify Team's Transitions
+        StatusTransition startTransition = null;
+        StatusTransition inProgressTransition = null;
+        LocalDateTime endTime = null;
+
+        for (int i = 0; i < transitions.size(); i++) {
+            StatusTransition t = transitions.get(i);
+            if (config.statuses().contains(t.getStatus())) {
+                if (t.getStatus() == config.entryStatus() && startTransition == null) {
+                    startTransition = t;
+                }
+
+                // Check for IN_PROGRESS
+                if (t.getStatus() == config.firstInProgressStatus() && inProgressTransition == null) {
+                    inProgressTransition = t;
+                }
+
+                // Look ahead for end of team block
+                if (i + 1 < transitions.size()) {
+                    StatusTransition next = transitions.get(i + 1);
+                    if (!config.statuses().contains(next.getStatus())) {
+                        endTime = next.getChangeTime();
+                        break; // Exited team block
+                    }
+                }
+            }
+        }
+
+        if (startTransition == null || endTime == null) {
+            return Duration.ZERO;
+        }
+
+        // 2. Calculate Effective Start Time
+        LocalDateTime effectiveStart = calculateEffectiveStartTime(startTransition, inProgressTransition, config);
+
+        // 3. Calculate Duration (Wall Clock - Parked)
+        if (effectiveStart.isAfter(endTime)) {
+            return Duration.ZERO;
+        }
+
+        Duration totalDuration = Duration.between(effectiveStart, endTime);
+        Duration parkedDuration = calculateParkedDuration(transitions, effectiveStart, endTime);
+
+        return totalDuration.minus(parkedDuration);
+    }
+
+    private LocalDateTime calculateEffectiveStartTime(StatusTransition startTransition,
+            StatusTransition inProgressTransition, TeamConfig config) {
+        LocalDateTime entryTime = startTransition.getChangeTime();
+
+        // Check if entry is after cutoff
+        if (entryTime.toLocalTime().isAfter(config.cutoffTime())) {
+            LocalDateTime nextBusinessDayStart = durationCalculator
+                    .getNextBusinessDayStart(entryTime.toLocalDate().plusDays(1), config);
+
+            // Special Case: Team started working (IN_PROGRESS) before next business day
+            if (inProgressTransition != null && inProgressTransition.getChangeTime().isBefore(nextBusinessDayStart)) {
+                return inProgressTransition.getChangeTime();
+            }
+
+            return nextBusinessDayStart;
+        }
+
+        return entryTime;
+    }
+
+    private Duration calculateParkedDuration(List<StatusTransition> transitions, LocalDateTime start,
+            LocalDateTime end) {
+        Duration parkedDuration = Duration.ZERO;
 
         for (int i = 0; i < transitions.size() - 1; i++) {
             StatusTransition current = transitions.get(i);
             StatusTransition next = transitions.get(i + 1);
 
-            // Skip if parked
-            if (current.getStatus().name().endsWith("_PARKED")) {
-                continue;
-            }
+            if (current.getStatus().isParked()) {
+                LocalDateTime parkStart = current.getChangeTime();
+                LocalDateTime parkEnd = next.getChangeTime();
 
-            // Check if status belongs to team
-            if (config.statuses().contains(current.getStatus())) {
-                totalDuration = totalDuration.plus(
-                    durationCalculator.calculateDuration(current.getChangeTime(), next.getChangeTime(), config)
-                );
+                // Intersect park interval with [start, end]
+                LocalDateTime effectiveParkStart = parkStart.isAfter(start) ? parkStart : start;
+                LocalDateTime effectiveParkEnd = parkEnd.isBefore(end) ? parkEnd : end;
+
+                if (effectiveParkStart.isBefore(effectiveParkEnd)) {
+                    parkedDuration = parkedDuration.plus(Duration.between(effectiveParkStart, effectiveParkEnd));
+                }
             }
         }
-
-        return totalDuration;
+        return parkedDuration;
     }
 }

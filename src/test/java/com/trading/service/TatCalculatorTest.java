@@ -22,156 +22,218 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class TatCalculatorTest {
 
-    private TatCalculator tatCalculator;
+        private TatCalculator tatCalculator;
 
-    @BeforeEach
-    void setUp() {
-        BusinessDurationCalculator durationCalculator = new BusinessDurationCalculator();
-        
-        Set<OrderStatus> auditStatuses = Arrays.stream(OrderStatus.values())
-                .filter(s -> s.name().startsWith("AUDIT_REVIEW"))
-                .collect(Collectors.toSet());
-        
-        Set<OrderStatus> tradingStatuses = Arrays.stream(OrderStatus.values())
-                .filter(s -> s.name().startsWith("TRADING"))
-                .collect(Collectors.toSet());
+        @BeforeEach
+        void setUp() {
+                BusinessDurationCalculator durationCalculator = new BusinessDurationCalculator();
 
-        TeamConfig auditConfig = TeamConfig.builder()
-                .teamName("AUDIT_REVIEW")
-                .statuses(auditStatuses)
-                .startTime(LocalTime.of(9, 0))
-                .cutoffTime(LocalTime.of(17, 0))
-                .zoneId(ZoneId.systemDefault())
-                .build();
+                Set<OrderStatus> auditStatuses = Arrays.stream(OrderStatus.values())
+                                .filter(s -> s.name().startsWith("AUDIT_REVIEW") && !s.name().endsWith("_APPROVED"))
+                                .collect(Collectors.toSet());
 
-        TeamConfig tradingConfig = TeamConfig.builder()
-                .teamName("TRADING")
-                .statuses(tradingStatuses)
-                .startTime(LocalTime.of(9, 0))
-                .cutoffTime(LocalTime.of(17, 0))
-                .zoneId(ZoneId.systemDefault())
-                .build();
+                Set<OrderStatus> tradingStatuses = Arrays.stream(OrderStatus.values())
+                                .filter(s -> s.name().startsWith("TRADING"))
+                                .collect(Collectors.toSet());
 
-        tatCalculator = new TatCalculator(durationCalculator, Map.of(
-                "AUDIT_REVIEW", auditConfig,
-                "TRADING", tradingConfig
-        ));
-    }
+                TeamConfig auditConfig = TeamConfig.builder()
+                                .teamName("AUDIT_REVIEW")
+                                .statuses(auditStatuses)
+                                .entryStatus(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN)
+                                .firstInProgressStatus(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS)
+                                .startTime(LocalTime.of(9, 0))
+                                .cutoffTime(LocalTime.of(17, 0))
+                                .zoneId(ZoneId.systemDefault())
+                                .build();
 
-    @Test
-    void testOverallTat() {
-        LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday
-        List<StatusTransition> transitions = new ArrayList<>();
-        transitions.add(new StatusTransition(OrderStatus.DRAFT, start));
-        transitions.add(new StatusTransition(OrderStatus.SUBMITTED, start.plusMinutes(10)));
-        transitions.add(new StatusTransition(OrderStatus.COMPLETED, start.plusMinutes(60)));
+                TeamConfig tradingConfig = TeamConfig.builder()
+                                .teamName("TRADING")
+                                .statuses(tradingStatuses)
+                                .entryStatus(OrderStatus.TRADING_OPEN)
+                                .firstInProgressStatus(OrderStatus.TRADING_IN_PROGRESS)
+                                .startTime(LocalTime.of(9, 0))
+                                .cutoffTime(LocalTime.of(17, 0))
+                                .zoneId(ZoneId.systemDefault())
+                                .build();
 
-        Order order = Order.builder()
-                .statusTransitions(transitions)
-                .build();
+                tatCalculator = new TatCalculator(durationCalculator, Map.of(
+                                "AUDIT_REVIEW", auditConfig,
+                                "TRADING", tradingConfig));
+        }
 
-        Duration result = tatCalculator.calculateOverallTat(order);
-        assertEquals(Duration.ofMinutes(60), result);
-    }
+        @Test
+        void testOverallTat() {
+                LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday
+                List<StatusTransition> transitions = new ArrayList<>();
+                transitions.add(new StatusTransition(OrderStatus.DRAFT, start));
+                transitions.add(new StatusTransition(OrderStatus.SUBMITTED, start.plusMinutes(10)));
+                transitions.add(new StatusTransition(OrderStatus.COMPLETED, start.plusMinutes(60)));
 
-    @Test
-    void testAuditReviewTeamTat_Standard() {
-        LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday 10 AM
-        List<StatusTransition> transitions = new ArrayList<>();
-        // DRAFT: 10:00
-        transitions.add(new StatusTransition(OrderStatus.DRAFT, start));
-        // AUDIT_REVIEW_LEVEL1_OPEN: 10:10
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start.plusMinutes(10)));
-        // AUDIT_REVIEW_LEVEL1_IN_PROGRESS: 10:20
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS, start.plusMinutes(20)));
-        // STARTED: 10:50
-        transitions.add(new StatusTransition(OrderStatus.STARTED, start.plusMinutes(50)));
-        
-        // Total AUDIT time = 10m (OPEN) + 30m (IN_PROGRESS) = 40m
+                Order order = Order.builder()
+                                .statusTransitions(transitions)
+                                .build();
 
-        Order order = Order.builder()
-                .statusTransitions(transitions)
-                .build();
+                Duration result = tatCalculator.calculateOverallTat(order);
+                assertEquals(Duration.ofMinutes(60), result);
+        }
 
-        Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
-        assertEquals(Duration.ofMinutes(40), result);
-    }
+        @Test
+        void testAuditReviewTeamTat_Standard() {
+                LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday 10 AM
+                List<StatusTransition> transitions = new ArrayList<>();
+                // DRAFT: 10:00
+                transitions.add(new StatusTransition(OrderStatus.DRAFT, start));
+                // AUDIT_REVIEW_LEVEL1_OPEN: 10:10
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start.plusMinutes(10)));
+                // AUDIT_REVIEW_LEVEL1_IN_PROGRESS: 10:20
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS,
+                                start.plusMinutes(20)));
+                // STARTED: 10:50
+                transitions.add(new StatusTransition(OrderStatus.STARTED, start.plusMinutes(50)));
 
-    @Test
-    void testAuditReviewTeamTat_ParkedExcluded() {
-        LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday
-        List<StatusTransition> transitions = new ArrayList<>();
-        
-        // OPEN: 10:00
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
-        
-        // PARKED: 10:10 (OPEN duration: 10m)
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_PARKED, start.plusMinutes(10)));
-        
-        // IN_PROGRESS: 11:10 (PARKED duration: 60m - SHOULD BE EXCLUDED)
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS, start.plusMinutes(70)));
-        
-        // COMPLETED: 11:20 (IN_PROGRESS duration: 10m)
-        transitions.add(new StatusTransition(OrderStatus.COMPLETED, start.plusMinutes(80)));
+                // Entry: 10:10 (Before Cutoff) -> Effective Start: 10:10
+                // End: 10:50
+                // Duration: 40m
 
-        // Total AUDIT = 10m (OPEN) + 0m (PARKED) + 10m (IN_PROGRESS) = 20m
+                Order order = Order.builder()
+                                .statusTransitions(transitions)
+                                .build();
 
-        Order order = Order.builder()
-                .statusTransitions(transitions)
-                .build();
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofMinutes(40), result);
+        }
 
-        Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
-        assertEquals(Duration.ofMinutes(20), result);
-    }
+        @Test
+        void testAuditReviewTeamTat_ParkedExcluded() {
+                LocalDateTime start = LocalDateTime.of(2023, 1, 2, 10, 0); // Monday
+                List<StatusTransition> transitions = new ArrayList<>();
 
-    @Test
-    void testAuditReviewTeamTat_AfterCutoff() {
-        // Friday 17:30 (After 17:00 cutoff)
-        LocalDateTime start = LocalDateTime.of(2023, 1, 6, 17, 30); 
-        
-        List<StatusTransition> transitions = new ArrayList<>();
-        
-        // OPEN: Fri 17:30 -> Mon 09:30
-        // Effective Start: Mon 09:00
-        // End: Mon 09:30
-        // Duration: 30m
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
-        
-        // COMPLETED: Mon 09:30
-        LocalDateTime end = LocalDateTime.of(2023, 1, 9, 9, 30);
-        transitions.add(new StatusTransition(OrderStatus.COMPLETED, end));
+                // OPEN: 10:00
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
 
-        Order order = Order.builder()
-                .statusTransitions(transitions)
-                .build();
+                // PARKED: 10:10
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_PARKED, start.plusMinutes(10)));
 
-        Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
-        assertEquals(Duration.ofMinutes(30), result);
-    }
+                // IN_PROGRESS: 11:10 (Parked for 60m)
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS,
+                                start.plusMinutes(70)));
 
-    @Test
-    void testAuditReviewTeamTat_OverWeekend() {
-        // Friday 16:00
-        LocalDateTime start = LocalDateTime.of(2023, 1, 6, 16, 0);
-        
-        List<StatusTransition> transitions = new ArrayList<>();
-        
-        // OPEN: Fri 16:00 -> Mon 10:00
-        // Fri: 16:00 -> 17:00 (1h)
-        // Sat/Sun: 0
-        // Mon: 09:00 -> 10:00 (1h)
-        // Total: 2h = 120m
-        transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
-        
-        // COMPLETED: Mon 10:00
-        LocalDateTime end = LocalDateTime.of(2023, 1, 9, 10, 0);
-        transitions.add(new StatusTransition(OrderStatus.COMPLETED, end));
+                // COMPLETED: 11:20
+                transitions.add(new StatusTransition(OrderStatus.COMPLETED, start.plusMinutes(80)));
 
-        Order order = Order.builder()
-                .statusTransitions(transitions)
-                .build();
+                // Entry: 10:00 -> Effective Start: 10:00
+                // End: 11:20
+                // Gross Duration: 80m
+                // Parked: 10:10 -> 11:10 (60m)
+                // Net: 20m
 
-        Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
-        assertEquals(Duration.ofMinutes(120), result);
-    }
+                Order order = Order.builder()
+                                .statusTransitions(transitions)
+                                .build();
+
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofMinutes(20), result);
+        }
+
+        @Test
+        void testAuditReviewTeamTat_AfterCutoff() {
+                // Friday 17:30 (After 17:00 cutoff)
+                LocalDateTime start = LocalDateTime.of(2023, 1, 6, 17, 30);
+
+                List<StatusTransition> transitions = new ArrayList<>();
+
+                // OPEN: Fri 17:30
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
+
+                // COMPLETED: Mon 09:30
+                LocalDateTime end = LocalDateTime.of(2023, 1, 9, 9, 30);
+                transitions.add(new StatusTransition(OrderStatus.COMPLETED, end));
+
+                // Entry: Fri 17:30 (> Cutoff)
+                // Next Business Day Start: Mon 09:00
+                // Effective Start: Mon 09:00
+                // End: Mon 09:30
+                // Duration: 30m
+
+                Order order = Order.builder()
+                                .statusTransitions(transitions)
+                                .build();
+
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofMinutes(30), result);
+        }
+
+        @Test
+        void testAuditReviewTeamTat_OverWeekend() {
+                // Friday 16:00
+                LocalDateTime start = LocalDateTime.of(2023, 1, 6, 16, 0);
+
+                List<StatusTransition> transitions = new ArrayList<>();
+
+                // OPEN: Fri 16:00
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, start));
+
+                // COMPLETED: Mon 10:00
+                LocalDateTime end = LocalDateTime.of(2023, 1, 9, 10, 0);
+                transitions.add(new StatusTransition(OrderStatus.COMPLETED, end));
+
+                // Entry: Fri 16:00 (< Cutoff)
+                // Effective Start: Fri 16:00
+                // End: Mon 10:00
+                // Duration (Wall Clock): Fri 16:00 -> Mon 10:00
+                // Fri 16:00 -> Sat 16:00 (24h)
+                // Sat 16:00 -> Sun 16:00 (24h)
+                // Sun 16:00 -> Mon 10:00 (18h)
+                // Total: 66h = 3960m
+
+                Order order = Order.builder()
+                                .statusTransitions(transitions)
+                                .build();
+
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofHours(66), result);
+        }
+
+        @Test
+        void testUserExample() {
+                LocalDateTime t0 = LocalDateTime.of(2023, 1, 2, 9, 0); // DRAFT
+                LocalDateTime t1 = t0.plusMinutes(10); // SUBMITTED
+                LocalDateTime t2 = t0.plusMinutes(20); // STARTED
+                LocalDateTime t3 = t0.plusMinutes(30); // AUDIT_REVIEW_LEVEL1_OPEN
+                LocalDateTime t4 = t0.plusMinutes(40); // AUDIT_REVIEW_LEVEL1_IN_PROGRESS
+                LocalDateTime t5 = t0.plusMinutes(50); // AUDIT_REVIEW_LEVEL1_PARKED
+                LocalDateTime t6 = t0.plusMinutes(110); // AUDIT_REVIEW_LEVEL1_IN_PROGRESS (Parked for 60m)
+                LocalDateTime t7 = t0.plusMinutes(120); // AUDIT_REVIEW_LEVEL1_SUBMITTED
+                LocalDateTime t8 = t0.plusMinutes(130); // AUDIT_REVIEW_LEVEL2_OPEN
+                LocalDateTime t9 = t0.plusMinutes(140); // AUDIT_REVIEW_LEVEL2_IN_PROGRESS
+                LocalDateTime t10 = t0.plusMinutes(150); // AUDIT_REVIEW_LEVEL2_APPROVED
+
+                List<StatusTransition> transitions = new ArrayList<>();
+                transitions.add(new StatusTransition(OrderStatus.DRAFT, t0));
+                transitions.add(new StatusTransition(OrderStatus.SUBMITTED, t1));
+                transitions.add(new StatusTransition(OrderStatus.STARTED, t2));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_OPEN, t3));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS, t4));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_PARKED, t5));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_IN_PROGRESS, t6));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL1_SUBMITTED, t7));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL2_OPEN, t8));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL2_IN_PROGRESS, t9));
+                transitions.add(new StatusTransition(OrderStatus.AUDIT_REVIEW_LEVEL2_APPROVED, t10));
+
+                Order order = Order.builder().statusTransitions(transitions).build();
+
+                // Expected TAT for AUDIT_REVIEW:
+                // T3->T4 (OPEN): 10m
+                // T4->T5 (IN_PROGRESS): 10m
+                // T5->T6 (PARKED): Skipped
+                // T6->T7 (IN_PROGRESS): 10m
+                // T7->T8 (SUBMITTED): 10m
+                // T8->T9 (OPEN): 10m
+                // T9->T10 (IN_PROGRESS): 10m
+                // Total: 60m.
+
+                Duration result = tatCalculator.calculateAuditReviewTeamTat(order);
+                assertEquals(Duration.ofMinutes(60), result);
+        }
 }
